@@ -51,6 +51,9 @@ void NN::MaxPool2d(int max_pool){
 std::vector<Eigen::MatrixXf> NN::MaxPool2d(std::vector<Eigen::MatrixXf> input){
     int row_input = input[0].rows();
     int col_input = input[0].cols();
+    in_rows_ = row_input;
+    in_cols_ = col_input;
+    in_channels_ = out_channels_ = input.size();
     // std::cout << "row: " << row_input << ", col: " << col_input << std::endl;
     std::vector<Eigen::MatrixXf> output;
 
@@ -186,7 +189,7 @@ void NN::Softmax(){
 }
 
 Eigen::VectorXf NN::Softmax(Eigen::VectorXf input){
-    Eigen::VectorXf output = DLMATH::SoftMax(input);
+    Eigen::VectorXf output = DLMATH::Softmax(input);
     output_vec_.push_back(output);
     return output;
 }

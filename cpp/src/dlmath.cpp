@@ -11,7 +11,7 @@ namespace DLMATH {
         return exp(x)/pow(1+exp(x),2);
     }
 
-    Eigen::VectorXf SoftMax(Eigen::VectorXf x){
+    Eigen::VectorXf Softmax(Eigen::VectorXf x){
         double sum = 0;
         for (int i = 0; i < x.size(); i++){
             sum += exp(x[i]);
@@ -23,8 +23,8 @@ namespace DLMATH {
         return y;
     }
 
-    double SoftMaxPrime(Eigen::VectorXf x, int i, int j){
-        Eigen::VectorXf y = SoftMax(x);
+    double SoftmaxPrime(Eigen::VectorXf x, int i, int j){
+        Eigen::VectorXf y = Softmax(x);
         if (i == j){
             return y[i]*(1-y[j]);
         }else{

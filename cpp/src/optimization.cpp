@@ -1,5 +1,5 @@
 #include "optimization.h"
-
+#include "dlmath.h"
 
 Optimization::Optimization(CNN& cnn, double lr){
     cnn_ = &cnn;
@@ -46,15 +46,70 @@ void Optimization::zero_grad(){
 }
 
 void Optimization::backward(){
+    std::string data_type = "vector";
     int T = cnn_->input_.size();
     for(auto i=cnn_->network_.rbegin(); i!=cnn_->network_.rend(); i++){   // The last layer is the loss function
-        // Activation layer & Loss function layer do not need to update the derivatives
-        if(i->getFunctionType() == "Activation" || i->getFunctionType() == "LossFunction"){
+        // Loss function layer do not need to do anything
+        if(i->getFunctionType() == "LossFunction"){
             continue;
         }
 
+        // Calculate the responsibility
+        if(i->getFunctionType() == "Activation"){
+            if(data_type == "vector"){
+                i->responsibility_vec_.resize(T);
+                int vec_size = i->output_vec_[0].size();
+                for(int t=0; t<T; t++){
+                    // Calculate the back-propagation gain (df/dz)
+                    Eigen::VectorXf f_prime(vec_size);
+                    // Find the input data in order to calculate the gain
+                    Eigen::VectorXf input_vec = (i-1)->output_vec_[t];
+                    for(int id=0; id<vec_size; id++){
+                        double input = input_vec(id);
+                        if(i->getActivationFunction() == "ReLU"){
+                            f_prime(id) = DLMATH::ReLUPrime(input);
+                        }else if(i->getActivationFunction() == "Softmax"){
+                            // The Cross-Entropy with Softmax function => dE/dz = r - y
+                            // r - y has already caculated and saved in (i+1)->responsibility_vec_
+                            f_prime(id) = 1; 
+                        }else if(i->getActivationFunction() == "Sigmoid"){
+                            f_prime(id) = DLMATH::SigmoidPrime(input);
+                        }
+                        
+                    }
+                    // Do the element-wise multiplication
+                    i->responsibility_vec_[t] = (i+1)->responsibility_vec_[t].array() * f_prime.array();
+                }
+            }else if(data_type == "matrix"){
+                int channels = i->output_mat_[0].size();
+                i->responsibility_mat_.resize(T);
+                for(int t=0; t<T; t++){
+                    // Calculate the back-propagation gain (df/dz)
+                    int row_size = i->output_mat_[0][0].rows();
+                    int col_size = i->output_mat_[0][0].cols();
+                    Eigen::MatrixXf f_prime(row_size, col_size);
+
+                    // Do the element-wise multiplication layer by layer
+                    i->responsibility_mat_[t].resize(channels);
+                    for(int channel=0; channel<channels; channel++){
+                        for(int row=0; row<row_size; row++){
+                            for(int col=0; col<col_size; col++){
+                                double input = (i-1)->output_mat_[t][channel](row, col);
+                                if(i->getActivationFunction() == "ReLU"){
+                                    f_prime(row, col) = DLMATH::ReLUPrime(input);
+                                }else if(i->getActivationFunction() == "Sigmoid"){
+                                    f_prime(row, col) = DLMATH::SigmoidPrime(input);
+                                }
+                            }
+                        }
+                        i->responsibility_mat_[t][channel] = (i+1)->responsibility_mat_[t][channel].array() * f_prime.array();
+                    }
+
+                }
+            }
+        }
         // Calculate the responsibility & Update derivatives
-        if(i->getFunctionType() == "Linear"){
+        else if(i->getFunctionType() == "Linear"){
             int input_size = i->weights_linear_->in_channels_;
             int output_size = i->weights_linear_->out_channels_;
 
@@ -67,16 +122,9 @@ void Optimization::backward(){
                 for(int col=0; col<input_size; col++){
                     double derivative = 0;
                     for(int t=0; t<T; t++){
-                        double e = (i+2)->responsibility_vec_[t](row);
-                        double f_prime = (i+1)->output_vec_[t](row);
-                        double z;
-                        if((i-1)->getFunctionType() == "Flatten"){
-                            z = (col == input_size-1) ? 1 : (i-1)->getCuboidValueFromVector(t, col); // If col==input_size-1, it's the bias
-                        }else if((i-1)->getFunctionType() == "Activation"){
-                            z = (col == input_size-1) ? 1 : (i-1)->output_vec_[t](col); // If col==input_size-1, it's the bias
-                        }
-                        
-                        derivative += e * f_prime * z;
+                        double e = (i+1)->responsibility_vec_[t](row);
+                        double z = (col == input_size-1) ? 1 : (i-1)->output_vec_[t](col); // If col==input_size-1, it's the bias
+                        derivative += e * z;
                     }
                     derivative = -1 * derivative;
                     i->weights_linear_->weights_derivative_(row, col) = derivative;
@@ -85,21 +133,114 @@ void Optimization::backward(){
 
             // Calculate the responsibility
             for(int t=0; t<T; t++){
-                i->responsibility_vec_[t] = i->weights_linear_->weights_.transpose() * (i+1)->output_vec_[t];
+                i->responsibility_vec_[t] = i->weights_linear_->weights_.transpose() * i->responsibility_vec_[t];
             }
         }
-        // Update derivatives
+        // Calculate the responsibility
         else if(i->getFunctionType() == "Flatten"){
-
-
+            data_type = "matrix";
+            for(int t=0; t<T; t++){
+                i->unFlatten((i+1)->responsibility_vec_[t]);
+            }
+            // i->unFlattenBatch((i+1)->responsibility_vec_);
+            
         }
+        // Calculate the responsibility
         else if(i->getFunctionType() == "MaxPool2d"){
-
+            int channels = i->getInChannels();
+            int rows = i->getInRows();
+            int cols = i->getInCols();
+            int max_pool_ = i->getMaxPool();
+            double f_prime;
+            // Iterate all of the Batch
+            for(int t=0; t<T; t++){
+                // Iterate all of the element in the cuboid
+                for(int channel=0; channel < channels; channel++){
+                    for(int row=0; row<rows; row++){
+                        for(int col=0; col<cols; col++){
+                            // calculate the corresponding index in the output
+                            int pool_row = row/max_pool_;
+                            int pool_col = col/max_pool_;
+                            // calculate derivative df/dz, f is the max_pool function
+                            if((i-1)->output_mat_[t][channel](row, col) == i->output_mat_[t][channel](pool_row, pool_col)){
+                                f_prime = 1;
+                            }else{
+                                f_prime = 0;
+                            }
+                            i->responsibility_mat_[t][channel](row, col) = f_prime * (i+1)->responsibility_mat_[t][channel](pool_row, pool_col);
+                        }
+                    }
+                }
+            }
         }
+        // Calculate the responsibility & Update derivatives
         else if(i->getFunctionType() == "Conv2d"){
+            // Update derivatives
+            int kernel_size = i->getKernelSize();
+            int padding = i->getPadding();
+            int stride = i->getStride();
+            int input_row = (i-1)->output_mat_[0][0].rows();
+            int input_col = (i-1)->output_mat_[0][0].cols();
+            int output_row = (input_row + padding *2 - kernel_size + 1)/stride;
+            int output_col = (input_col + padding *2 - kernel_size + 1)/stride;
+            int input_row_padding = input_row + padding*2;
+            int input_col_padding = input_col + padding*2;
+            int channels = (i-1)->output_mat_[0].size();
+
+            for(int t=0; t<T; t++){
+                // add padding - resize
+                std::vector<Eigen::MatrixXf> input_padding;
+                for (int k = 0; k < channels; k++){
+                    input_padding.push_back(Eigen::MatrixXf::Zero(input_row + padding*2, input_col + padding*2));
+                }
+                // add padding - give numbers
+                for (int k = 0; k < channels; k++){
+                    for (int r = 0; r < input_row; r++){
+                        for (int l = 0; l < input_col; l++){
+                            input_padding[k](r + padding, l + padding) = (i-1)->output_mat_[t][k](r,l);
+                        }
+                    }
+                }
+
+                for(int i_input=0; i_input<input_row_padding; i_input+=stride){
+                    for(int j_input=0; j_input<input_col_padding; j_input+=stride){
+                        std::vector<Eigen::MatrixXf> block = DLMATH::Block(input_padding, i_input, j_input, kernel_size);
+                        // 
+                        int i_output = i_input / stride;
+                        int j_output = j_input / stride;
+                        for(int channel=0; channel<channels; channel++){
+                            double derivative = (i+1)->responsibility_mat_[t][channel](i_output, j_output);
+                            i->weights_kernel_->kernels_[t].kernel_derivative_[channel] += block[channel]*derivative;
+                        }
+                    }
+                }
+
+            }
+
+            // Calculate the responsibility
+            for(int t=0; t<T; t++){
+                for(int i_output=0; i_output<output_row; i_output++){
+                    for(int j_output=0; j_output<output_col; j_output++){
+                        for(int channel=0; channel<channels; channel++){
+                            double e = (i+1)->responsibility_mat_[t][channel](i_output, j_output);
+                            for(int row_kernel=0; row_kernel<kernel_size; row_kernel++){
+                                for(int col_kernel=0; col_kernel<kernel_size; col_kernel++){
+                                    int row_respons = i_output * kernel_size + row_kernel - kernel_size;
+                                    int col_respons = j_output * kernel_size + col_kernel - kernel_size;
+                                    if(row_respons < 0 || row_respons >= input_row || col_respons < 0 || col_respons >= input_col){
+                                        continue;
+                                    }
+                                    double kernel = i->weights_kernel_->kernels_[t].kernel_[channel](row_kernel, col_kernel);
+                                    i->responsibility_mat_[t][channel](row_respons, col_respons) += e * kernel;
+                                }
+                            }
+                        }
+                    }
+                }
+
+            }
 
         }
-
     }
 }
 

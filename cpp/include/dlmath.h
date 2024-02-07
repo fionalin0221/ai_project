@@ -12,10 +12,10 @@ namespace DLMATH{
 
     // [y1, y2,...,yi] = softmax(a1, a2,...,aj)
     // yi = exp(ai)/(exp(a1)+exp(a2)+...+exp(aj))
-    Eigen::VectorXf SoftMax(Eigen::VectorXf x);
+    Eigen::VectorXf Softmax(Eigen::VectorXf x);
 
     // return dyi/daj
-    double SoftMaxPrime(Eigen::VectorXf x, int i, int j);
+    double SoftmaxPrime(Eigen::VectorXf x, int i, int j);
 
     double ReLU(double x);
 

@@ -23,6 +23,10 @@ private:
     std::string activation_function_; // [ReLU, Sigmoid, Softmax]
     std::string loss_function_;  // [CrossEntropyLoss]
 
+    // save size of input data
+    int in_rows_;
+    int in_cols_;
+
 public:
     // weights
     Kernel4d* weights_kernel_;     // Only used if function_type_=="Conv2d"
@@ -42,6 +46,20 @@ public:
     std::string getActivationFunction(){ return activation_function_; }
 
     std::string getLossFunction(){ return loss_function_; }
+
+    int getKernelSize(){ return kernel_size_; }
+
+    int getStride(){ return stride_; }
+
+    int getPadding(){ return padding_; }
+
+    int getMaxPool(){ return max_pool_; }
+
+    int getInRows(){ return in_rows_; }
+
+    int getInCols(){ return in_cols_; }
+
+    int getInChannels(){ return in_channels_; }
 
     // The following function has two types. 
     // 1. One is used to define the layer. 
